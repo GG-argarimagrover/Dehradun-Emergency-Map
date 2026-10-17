@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dehradun Emergency Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<style>
+:root{--bg:#0f1419;--p:#171d26;--l:#2a3441;--t:#e8edf3;--m:#8b98a8}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--t);font:14px/1.45 system-ui,Segoe UI,Roboto,sans-serif;display:flex;flex-direction:column}
+header{padding:10px 18px;border-bottom:1px solid var(--l)}h1{font-size:18px;margin:0}header p{margin:2px 0 0;color:var(--m);font-size:12px}
+#kpis{display:flex;gap:10px;flex-wrap:wrap;padding:8px 18px;background:var(--p);border-bottom:1px solid var(--l)}
+.k{background:var(--bg);border:1px solid var(--l);border-radius:8px;padding:5px 12px;cursor:pointer;min-width:105px;border-left:4px solid}
+.k b{display:block;font-size:20px}.k span{color:var(--m);font-size:11px}.k.off{opacity:.4}
+main{flex:1;display:flex;min-height:0}
+aside{width:330px;overflow:auto;padding:12px 14px;background:var(--p);border-right:1px solid var(--l)}
+.wrap{flex:1;position:relative}#map{position:absolute;inset:0}
+h3{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--m);margin:14px 0 6px}
+.seg{display:flex;gap:4px;flex-wrap:wrap}
+.seg button,.tier{background:var(--bg);color:var(--t);border:1px solid var(--l);border-radius:6px;padding:5px 9px;cursor:pointer;font:inherit}
+.seg button.on{border-color:#4cc9f0;background:#16303a}
+input[type=search]{width:100%;background:var(--bg);color:var(--t);border:1px solid var(--l);border-radius:6px;padding:7px 9px;font:inherit}
+#list{max-height:230px;overflow:auto;margin-top:6px}
+.it{padding:5px 4px;border-bottom:1px solid var(--l);cursor:pointer;font-size:13px}.it:hover{background:#1f2832;color:#4cc9f0}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
+.tier{display:flex;width:100%;align-items:center;gap:8px;margin-bottom:4px}.tier.off{opacity:.35}
+.tier i{width:14px;height:14px;border-radius:3px}.tier em{margin-left:auto;font-style:normal;color:var(--m)}
+.gap{padding:5px 0;border-bottom:1px solid var(--l);cursor:pointer}.gap:hover{color:#4cc9f0}small{color:var(--m)}
+#warn{background:#3a2a10;border:1px solid #7a5a1a;border-radius:6px;padding:7px 9px;font-size:12px;margin-top:10px;display:none}
+.ov{position:absolute;z-index:1000;background:var(--p);color:var(--t);border:1px solid var(--l);border-radius:8px;padding:10px 12px;box-shadow:0 2px 10px #0006;font-size:13px}
+#card{top:12px;right:12px;width:300px}#card .r{margin:7px 0}
+#legend{right:12px;bottom:28px;font-size:12px}#legend div{display:flex;align-items:center;gap:6px;margin:2px 0}#legend i{width:14px;height:14px;border-radius:3px}
+.ok{color:#2ecc71}.bad{color:#f08a3c}
+.pin{border:2px solid #fff;border-radius:50%;color:#fff;font:700 12px/22px system-ui;text-align:center;box-shadow:0 1px 4px #0009;transition:transform .1s}.pin:hover{transform:scale(1.3)}
+@media(max-width:800px){main{flex-direction:column-reverse}aside{width:100%;max-height:45%}#card{width:230px}}
+</style>
+</head>
+<body>
+<header><h1>Dehradun Emergency Map</h1>
+<p>Where emergency services are, and how fast each one can reach you. Click a count to show or hide it, and click anywhere on the map.</p></header>
+<div id="kpis"></div>
+<main>
+<aside>
+<h3>Analyse</h3><div class="seg" id="svc"></div>
+<h3>Map view</h3><div class="seg" id="mode"></div>
+<div id="warn"></div>
+<div id="gridpanel" style="display:none">
+<h3>Distance tiers (click to filter)</h3><div id="tiers"></div>
+<h3>Biggest gaps</h3><div id="gaps"></div>
+</div>
+<h3 id="lh">Facilities</h3>
+<input type="search" id="q" placeholder="Search by name...">
+<div id="list"></div>
+<h3>Emergency numbers</h3>
+<div style="font-size:13px"><b>112</b> all-in-one &middot; <b>108</b> ambulance &middot; <b>102</b> mother and child<br><b>101</b> fire &middot; <b>100</b> police &middot; <b>1070 / 1077</b> disaster</div>
+<p style="color:var(--m);font-size:11px;margin-top:14px">Drive-time zones follow the road network at an assumed emergency speed. The distance grid is straight-line and limited to a 7 km radius of the city centre. Data: OpenStreetMap contributors, so check against official lists.</p>
+</aside>
+<div class="wrap"><div id="map"></div>
+<div class="ov" id="card"><b>Nearest emergency services</b><div class="r"><small>Click anywhere on the map to see the closest hospital, police station and fire station, and whether you are within a 5, 10 or 15 minute drive.</small></div></div>
+<div class="ov" id="legend"></div>
+</div>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+const BBOX=[30.22,77.90,30.42,78.15],STEP=0.005,CEN=[30.3165,78.0322],RAD=7;
+const CAT={hospital:{l:'Hospitals',c:'#e63946',ch:'H',iso:'Hospital',warn:0},police:{l:'Police stations',c:'#3a86ff',ch:'P',iso:'Police station',warn:10},
+ fire:{l:'Fire stations',c:'#fb8500',ch:'F',iso:'Fire station',warn:4},pharmacy:{l:'Pharmacies',c:'#9b5de5',ch:'+'}};
+const NAME2CAT={Hospital:'hospital','Police station':'police','Fire station':'fire',Pharmacy:'pharmacy'};
+const TIERS=[{n:'Excellent',t:'≤ 1 km',max:1,c:'#2ecc71'},{n:'Good',t:'1–2 km',max:2,c:'#a3d977'},{n:'Moderate',t:'2–4 km',max:4,c:'#f4c542'},{n:'Poor',t:'4–6 km',max:6,c:'#f08a3c'},{n:'Critical',t:'> 6 km',max:Infinity,c:'#e63946'}];
+const BANDC={5:'#2ecc71',10:'#f4c542',15:'#e63946'};
+const tierOf=d=>TIERS.findIndex(t=>d<=t.max);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hav=(a,b,c,d)=>{const p=Math.PI/180,x=Math.sin((c-a)*p/2)**2+Math.cos(a*p)*Math.cos(c*p)*Math.sin((d-b)*p/2)**2;return 12742*Math.asin(Math.sqrt(x))};
+const inRing=(r,x,y)=>{let c=false;for(let i=0,j=r.length-1;i<r.length;j=i++){const[a,b]=r[i],[d,e]=r[j];if((b>y)!==(e>y)&&x<(d-a)*(y-b)/(e-b)+a)c=!c}return c};
+const inPoly=(p,x,y)=>inRing(p[0],x,y)&&!p.slice(1).some(h=>inRing(h,x,y));
+const inGeom=(g,x,y)=>g.type==='Polygon'?inPoly(g.coordinates,x,y):g.coordinates.some(p=>inPoly(p,x,y));
+const $=id=>document.getElementById(id);
+
+const map=L.map('map',{preferCanvas:true}).setView(CEN,12);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);
+L.DomEvent.disableClickPropagation($('card'));L.DomEvent.disableClickPropagation($('legend'));
+const LG={};Object.keys(CAT).forEach(k=>LG[k]=L.layerGroup());
+const ov=L.layerGroup().addTo(map),pin=L.layerGroup().addTo(map);
+let fac=[],cells=[],isoData=null,iso={},svc='hospital',mode='iso',on=new Set(['hospital','police','fire']),active=new Set([0,1,2,3,4]),q='';
+
+async function getJSON(name){for(const p of ['data/'+name,name]){try{const r=await fetch(p);if(r.ok)return await r.json()}catch(e){}}return null}
+async function loadFacilities(){
+  const j=await getJSON('facilities.geojson');
+  if(j) return j.features.filter(f=>NAME2CAT[f.properties.category]).map(f=>({cat:NAME2CAT[f.properties.category],name:f.properties.name||'Unnamed',phone:f.properties.phone,lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]}));
+  const qy=`[out:json][timeout:25];nwr["amenity"~"^(hospital|police|fire_station|pharmacy)$"](${BBOX.join(',')});out center tags;`;
+  const EP=['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+  let r=null;
+  for(const u of EP){try{const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),30000);const x=await fetch(u,{method:'POST',body:'data='+encodeURIComponent(qy),signal:ctl.signal});clearTimeout(t);if(x.ok){r=await x.json();break}}catch(e){}}
+  if(!r) throw new Error('no data');
+  const seen=new Set(),out=[];
+  for(const e of r.elements){const a=e.tags.amenity,cat=a==='fire_station'?'fire':a,lat=e.lat??e.center?.lat,lng=e.lon??e.center?.lon;
+    if(!CAT[cat]||lat==null)continue;const name=e.tags.name||'Unnamed',key=name+cat+lat.toFixed(3)+lng.toFixed(3);
+    if(seen.has(key))continue;seen.add(key);out.push({cat,name,phone:e.tags.phone||e.tags['contact:phone'],lat,lng})}
+  return out;
+}
+
+function buildGrid(){cells=[];
+  for(let la=BBOX[0];la<BBOX[2];la+=STEP)for(let lo=BBOX[1];lo<BBOX[3];lo+=STEP){
+    const c={lat:la+STEP/2,lng:lo+STEP/2,d:{}};if(hav(c.lat,c.lng,CEN[0],CEN[1])>RAD)continue;
+    for(const k in CAT){let m=Infinity;for(const f of fac)if(f.cat===k){const d=hav(c.lat,c.lng,f.lat,f.lng);if(d<m)m=d}c.d[k]=m}
+    cells.push(c)}}
+
+function buildMarkers(){
+  fac.forEach(f=>{const c=CAT[f.cat],s=f.cat==='pharmacy'?18:26;
+    f.m=L.marker([f.lat,f.lng],{icon:L.divIcon({className:'',html:`<div class="pin" style="background:${c.c};width:${s}px;height:${s}px;line-height:${s-4}px">${c.ch}</div>`,iconSize:[s,s],iconAnchor:[s/2,s/2]})})
+      .bindPopup(`<b>${esc(f.name)}</b><br>${c.l.replace(/s$/,'')}${f.phone?'<br>'+esc(f.phone):''}`).bindTooltip(esc(f.name)).addTo(LG[f.cat])});
+  on.forEach(k=>LG[k].addTo(map));
+}
+
+function renderKpis(){
+  $('kpis').innerHTML=Object.entries(CAT).map(([k,v])=>`<div class="k ${on.has(k)?'':'off'}" data-k="${k}" style="border-left-color:${v.c}"><b>${fac.filter(f=>f.cat===k).length}</b><span>${v.l}</span></div>`).join('');
+  document.querySelectorAll('.k').forEach(e=>e.onclick=()=>{const k=e.dataset.k;if(on.has(k)){on.delete(k);map.removeLayer(LG[k])}else{on.add(k);LG[k].addTo(map)}renderKpis();renderList()});
+  const w=Object.entries(CAT).filter(([k,v])=>v.warn&&fac.filter(f=>f.cat===k).length<v.warn).map(([k,v])=>`${fac.filter(f=>f.cat===k).length} ${v.l.toLowerCase()}`);
+  $('warn').style.display=w.length?'block':'none';
+  $('warn').innerHTML=w.length?`⚠ OpenStreetMap lists only ${w.join(' and ')}. That is probably incomplete, so real coverage is likely better than shown. Check against official lists.`:'';
+}
+
+function renderList(){
+  const items=fac.filter(f=>on.has(f.cat)&&f.name.toLowerCase().includes(q)).sort((a,b)=>a.name.localeCompare(b.name));
+  $('lh').textContent=`Facilities (${items.length})`;
+  $('list').innerHTML=items.slice(0,80).map(f=>`<div class="it" data-i="${fac.indexOf(f)}"><span class="dot" style="background:${CAT[f.cat].c}"></span>${esc(f.name)}</div>`).join('')||'<small>No matches</small>';
+  document.querySelectorAll('.it').forEach(e=>e.onclick=()=>{const f=fac[+e.dataset.i];map.flyTo([f.lat,f.lng],16);setTimeout(()=>f.m.openPopup(),900)});
+}
+
+function render(){
+  ov.clearLayers();let leg='';
+  const hasIso=isoData&&CAT[svc].iso;
+  if(mode==='iso'){
+    if(hasIso){
+      const fs=isoData.features.filter(f=>f.properties.service===CAT[svc].iso).sort((a,b)=>b.properties.minutes-a.properties.minutes);
+      L.geoJSON({type:'FeatureCollection',features:fs},{interactive:false,style:f=>({color:BANDC[f.properties.minutes],weight:1,fillOpacity:.3})}).addTo(ov);
+      leg=`<b>Drive time to nearest ${CAT[svc].l.replace(/s$/,'').toLowerCase()}</b>`+[5,10,15].map(m=>`<div><i style="background:${BANDC[m]}"></i>within ${m} min</div>`).join('')+'<div><small>No colour = over 15 min</small></div>';
+    }else leg='<small>Drive-time zones are available for hospitals, police and fire stations. Pick one of those, or switch to Distance grid.</small>';
+  }
+  $('gridpanel').style.display=mode==='grid'?'block':'none';
+  if(mode==='grid'){
+    const cnt=TIERS.map(()=>0),h=STEP/2,n=cells.length;
+    for(const c of cells){const t=tierOf(c.d[svc]);cnt[t]++;
+      if(active.has(t))L.rectangle([[c.lat-h,c.lng-h],[c.lat+h,c.lng+h]],{stroke:false,fillColor:TIERS[t].c,fillOpacity:.4,interactive:false}).addTo(ov)}
+    $('tiers').innerHTML=TIERS.map((t,i)=>`<button class="tier ${active.has(i)?'':'off'}" data-i="${i}"><i style="background:${t.c}"></i>${t.n} ${t.t}<em>${(cnt[i]/n*100).toFixed(0)}%</em></button>`).join('');
+    document.querySelectorAll('.tier').forEach(b=>b.onclick=()=>{const i=+b.dataset.i;active.has(i)?active.delete(i):active.add(i);render()});
+    const pk=[];for(const c of [...cells].sort((a,b)=>b.d[svc]-a.d[svc])){if(pk.length>=6)break;if(pk.every(p=>hav(p.lat,p.lng,c.lat,c.lng)>1.5))pk.push(c)}
+    $('gaps').innerHTML=pk.map(c=>`<div class="gap" data-la="${c.lat}" data-lo="${c.lng}">${c.d[svc].toFixed(1)} km to nearest<br><small>${c.lat.toFixed(3)}, ${c.lng.toFixed(3)}</small></div>`).join('');
+    document.querySelectorAll('.gap').forEach(g=>g.onclick=()=>map.flyTo([+g.dataset.la,+g.dataset.lo],14));
+    leg='<b>Straight-line distance</b>'+TIERS.map(t=>`<div><i style="background:${t.c}"></i>${t.t}</div>`).join('');
+  }
+  $('legend').innerHTML=leg;$('legend').style.display=leg?'block':'none';
+  document.querySelectorAll('#svc button').forEach(b=>b.classList.toggle('on',b.dataset.k===svc));
+  document.querySelectorAll('#mode button').forEach(b=>b.classList.toggle('on',b.dataset.k===mode));
+}
+
+function buildControls(){
+  $('svc').innerHTML=Object.entries(CAT).map(([k,v])=>`<button data-k="${k}">${v.l}</button>`).join('');
+  document.querySelectorAll('#svc button').forEach(b=>b.onclick=()=>{svc=b.dataset.k;render()});
+  $('mode').innerHTML=[['iso','Drive-time zones'],['grid','Distance grid'],['none','Markers only']].map(([k,l])=>`<button data-k="${k}">${l}</button>`).join('');
+  document.querySelectorAll('#mode button').forEach(b=>b.onclick=()=>{mode=b.dataset.k;render()});
+  $('q').oninput=e=>{q=e.target.value.toLowerCase();renderList()};
+}
+
+map.on('click',e=>{
+  pin.clearLayers();L.circleMarker(e.latlng,{radius:7,color:'#fff',weight:2,fillColor:'#4cc9f0',fillOpacity:1}).addTo(pin);
+  const rows=['hospital','police','fire'].map(k=>{
+    let b=null,m=1e9;for(const f of fac)if(f.cat===k){const d=hav(e.latlng.lat,e.latlng.lng,f.lat,f.lng);if(d<m){m=d;b=f}}
+    if(!b)return'';
+    let t='';
+    if(isoData){const mn=[5,10,15].find(x=>iso[CAT[k].iso+'|'+x]&&inGeom(iso[CAT[k].iso+'|'+x],e.latlng.lng,e.latlng.lat));
+      t=mn?` &middot; <span class="ok">within ${mn} min drive</span>`:' &middot; <span class="bad">over 15 min, or off-road</span>'}
+    return `<div class="r"><span class="dot" style="background:${CAT[k].c}"></span><b>${esc(b.name)}</b><br><small>${m.toFixed(1)} km straight-line${t}</small></div>`;
+  }).join('');
+  $('card').innerHTML='<b>Nearest emergency services</b>'+(rows||'<div class="r">No data</div>')+'<small>Click elsewhere to compare</small>';
+});
+
+(async()=>{
+  $('kpis').innerHTML='<div class="k"><b>Loading…</b><span>fetching facilities</span></div>';
+  isoData=await getJSON('isochrones.geojson');
+  if(isoData)isoData.features.forEach(f=>iso[f.properties.service+'|'+f.properties.minutes]=f.geometry);else mode='grid';
+  try{fac=await loadFacilities()}catch(e){$('kpis').innerHTML='<div class="k"><b>Could not load data</b><span>check connection and reload</span></div>';return}
+  buildGrid();buildMarkers();buildControls();renderKpis();renderList();render();
+})();
+</script>
+</body>
+</html>
