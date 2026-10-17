@@ -61,21 +61,37 @@ const hav=(a,b,c,d)=>{const p=Math.PI/180,x=Math.sin((c-a)*p/2)**2+Math.cos(a*p)
 const $=id=>document.getElementById(id);
 
 const map=L.map('map',{preferCanvas:true}).setView([30.3165,78.0322],12);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{attribution:'© OpenStreetMap contributors © CARTO',maxZoom:19}).addTo(map);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(map);
 const G={markers:{},grid:L.layerGroup().addTo(map),rings:L.layerGroup(),iso:L.layerGroup(),pin:L.layerGroup().addTo(map)};
 let fac=[],cells=[],isoData=null,svc='hospital',active=new Set([0,1,2,3,4]),show={grid:true,rings:false,iso:false};
 Object.keys(CAT).forEach(k=>G.markers[k]=L.layerGroup());
 
+async function getJSON(name){
+  for(const p of ['data/'+name,name]){
+    try{const r=await fetch(p);if(r.ok)return await r.json()}catch(e){}
+  }
+  return null;
+}
 async function loadFacilities(){
   try{ // option 1: data built by build_data.py
-    const r=await fetch('data/facilities.geojson'); if(!r.ok) throw 0;
-    const j=await r.json();
+    const j=await getJSON('facilities.geojson'); if(!j) throw 0;
     return j.features.filter(f=>NAME2CAT[f.properties.category]).map(f=>({cat:NAME2CAT[f.properties.category],name:f.properties.name,
       phone:f.properties.phone,lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]}));
   }catch(e){ // option 2: live from OpenStreetMap (Overpass)
-    const q=`[out:json][timeout:60];nwr["amenity"~"^(hospital|police|fire_station|pharmacy)$"](${BBOX.join(',')});out center tags;`;
-    const r=await fetch('https://overpass-api.de/api/interpreter',{method:'POST',body:'data='+encodeURIComponent(q)});
-    const j=await r.json(), seen=new Set(), out=[];
+    const q=`[out:json][timeout:25];nwr["amenity"~"^(hospital|police|fire_station|pharmacy)$"](${BBOX.join(',')});out center tags;`;
+    const EP=['https://overpass-api.de/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass.kumi.systems/api/interpreter'];
+    let j=null;
+    for(const u of EP){
+      try{
+        const ctl=new AbortController(),t=setTimeout(()=>ctl.abort(),30000);
+        const r=await fetch(u,{method:'POST',body:'data='+encodeURIComponent(q),signal:ctl.signal});
+        clearTimeout(t);
+        if(!r.ok) continue;
+        j=await r.json();break;
+      }catch(err){}
+    }
+    if(!j) throw new Error('overpass unavailable');
+    const seen=new Set(), out=[];
     for(const e of j.elements){
       const a=e.tags.amenity, cat=a==='fire_station'?'fire':a, lat=e.lat??e.center?.lat, lng=e.lon??e.center?.lon;
       if(!CAT[cat]||lat==null) continue;
@@ -162,7 +178,7 @@ map.on('click',e=>{
 
 (async()=>{
   $('kpis').innerHTML='<div class="k"><b>Loading…</b><span>fetching facilities from OpenStreetMap</span></div>';
-  try{ const r=await fetch('data/isochrones.geojson'); if(r.ok) isoData=await r.json(); }catch(e){}
+  isoData=await getJSON('isochrones.geojson');
   try{ fac=await loadFacilities(); }catch(e){ $('kpis').innerHTML='<div class="k"><b>Could not load data</b><span>check your connection and reload</span></div>'; return; }
   buildGrid();drawMarkers();buildControls();render();
 })();
